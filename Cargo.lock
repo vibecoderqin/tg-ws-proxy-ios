@@ -1038,6 +1038,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tg-ws-proxy-ios"
+version = "0.0.0"
+dependencies = [
+ "tg-ws-proxy-rs",
+ "tokio",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "tg-ws-proxy-jni"
 version = "0.0.0"
 dependencies = [
