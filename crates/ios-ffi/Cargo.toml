@@ -1,0 +1,16 @@
+[package]
+name = "tg-ws-proxy-ios"
+version = "0.0.0"
+edition = "2024"
+description = "C FFI shim that runs tg-ws-proxy-rs inside the iOS app"
+license = "MIT"
+publish = false
+
+[lib]
+name = "tg_ws_proxy_ios"
+crate-type = ["staticlib"]
+
+[dependencies]
+tg-ws-proxy-rs = { path = "../.." }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "net", "time"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "registry"] }
