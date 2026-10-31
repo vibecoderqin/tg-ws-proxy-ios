@@ -65,7 +65,7 @@ jobs:
           plutil -lint "$APP/Info.plist"
           BUNDLE_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist")
           test "$BUNDLE_ID" = "$IOS_BUNDLE_ID"
-          xcrun lipo -verify_arch arm64 "$APP/TgWsProxy"
+          xcrun lipo "$APP/TgWsProxy" -verify_arch arm64
           test -f "$APP/TgWsProxy"
           test -d Payload/TgWsProxy.app
 
