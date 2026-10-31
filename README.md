@@ -197,9 +197,9 @@ behaviour; instructions for Linux, routers, Docker and Android do not describe
 the iOS app's lifecycle or installation process:
 
 - [Upstream Rust project](https://github.com/valnesfjord/tg-ws-proxy-rs)
-- [Fallback transport configuration](docs/Fallbacks.md)
-- [Engine build notes](docs/Building.md)
-- [Deployment and environment configuration](docs/Deployment.md)
+- [Fallback transport configuration](https://github.com/valnesfjord/tg-ws-proxy-rs/blob/main/docs/Fallbacks.md)
+- [Engine build notes](https://github.com/valnesfjord/tg-ws-proxy-rs/blob/main/docs/Building.md)
+- [Deployment and environment configuration](https://github.com/valnesfjord/tg-ws-proxy-rs/blob/main/docs/Deployment.md)
 
 Not every deployment mode documented for the upstream engine is implemented
 as an iOS feature.
