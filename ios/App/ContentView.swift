@@ -1,24 +1,29 @@
 import SwiftUI
+import UIKit
 
 struct ContentView: View {
     @StateObject private var proxy = ProxyController.shared
-    @Environment(\.scenePhase) private var scenePhase
+    @State private var showBackgroundWarning = false
 
     var body: some View {
         NavigationView {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    statusSection
                     argsSection
                     controlSection
+
                     if let error = proxy.errorMessage {
                         Text(error)
                             .font(.callout)
                             .foregroundColor(.red)
                     }
+
                     if let link = proxy.link {
                         linkSection(link)
                     }
-                    noticeSection
+
+                    backgroundNotice
                     logSection
                 }
                 .padding()
@@ -27,16 +32,67 @@ struct ContentView: View {
             .navigationBarTitleDisplayMode(.inline)
         }
         .navigationViewStyle(.stack)
-        .onChange(of: scenePhase) { phase in
-            if phase == .background { proxy.sceneDidEnterBackground() }
+        .alert("Ограничение фоновой работы iOS", isPresented: $showBackgroundWarning) {
+            Button("Продолжить") { proxy.openInTelegram() }
+            Button("Отмена", role: .cancel) {}
+        } message: {
+            Text("После перехода в Telegram iOS может приостановить TG WS Proxy. В текущей версии нет системного механизма, который гарантирует постоянную работу локального прокси в фоне. Поэтому Telegram может потерять соединение. Это предупреждение нельзя устранить одной Live Activity или обычной фоновой задачей.")
+        }
+    }
+
+    private var statusSection: some View {
+        VStack(spacing: 8) {
+            Image(systemName: statusSymbol)
+                .font(.system(size: 42))
+                .foregroundColor(statusColor)
+
+            Text(statusTitle)
+                .font(.headline)
+                .foregroundColor(statusColor)
+
+            if proxy.status == .running, let link = proxy.link {
+                Text(link.replacingOccurrences(of: "tg://proxy?", with: ""))
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundColor(.secondary)
+                    .textSelection(.enabled)
+                    .multilineTextAlignment(.center)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 8)
+    }
+
+    private var statusTitle: String {
+        switch proxy.status {
+        case .stopped: return "Прокси остановлен"
+        case .starting: return "Запуск прокси…"
+        case .running: return "Прокси активен"
+        case .stopping: return "Остановка прокси…"
+        }
+    }
+
+    private var statusSymbol: String {
+        switch proxy.status {
+        case .stopped: return "antenna.radiowaves.left.and.right.slash"
+        case .starting, .stopping: return "arrow.triangle.2.circlepath"
+        case .running: return "antenna.radiowaves.left.and.right"
+        }
+    }
+
+    private var statusColor: Color {
+        switch proxy.status {
+        case .stopped: return .secondary
+        case .starting, .stopping: return .orange
+        case .running: return .green
         }
     }
 
     private var argsSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Аргументы (как у tg-ws-proxy)")
+            Text("Параметры прокси")
                 .font(.footnote)
                 .foregroundColor(.secondary)
+
             TextEditor(text: $proxy.args)
                 .font(.system(.footnote, design: .monospaced))
                 .autocapitalization(.none)
@@ -45,8 +101,9 @@ struct ContentView: View {
                 .padding(6)
                 .background(Color(.secondarySystemBackground))
                 .cornerRadius(8)
-                .disabled(proxy.isRunning)
-            Text("Например: --secret <32 hex> --default-domains. Уберите --quiet, чтобы видеть логи.")
+                .disabled(proxy.status != .stopped)
+
+            Text("По умолчанию используется локальный адрес 127.0.0.1. Меняй параметры только при необходимости.")
                 .font(.caption)
                 .foregroundColor(.secondary)
         }
@@ -55,33 +112,60 @@ struct ContentView: View {
     private var controlSection: some View {
         HStack(spacing: 12) {
             Button {
-                proxy.isRunning ? proxy.stop() : proxy.start()
+                switch proxy.status {
+                case .stopped:
+                    proxy.start()
+                case .starting, .running:
+                    proxy.stop()
+                case .stopping:
+                    break
+                }
             } label: {
-                Text(proxy.isRunning ? "Стоп" : "Старт")
+                Text(controlTitle)
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
-            .tint(proxy.isRunning ? .red : .blue)
+            .tint(proxy.status == .running || proxy.status == .stopping ? .red : .blue)
+            .disabled(proxy.status == .stopping)
 
-            Button("Сбросить аргументы") { proxy.args = ProxyController.defaultArgs }
-                .buttonStyle(.bordered)
-                .disabled(proxy.isRunning)
+            Button("Сбросить") {
+                proxy.args = ProxyController.defaultArgs
+            }
+            .buttonStyle(.bordered)
+            .disabled(proxy.status != .stopped)
+        }
+    }
+
+    private var controlTitle: String {
+        switch proxy.status {
+        case .stopped: return "Запустить"
+        case .starting: return "Отменить запуск"
+        case .running: return "Остановить"
+        case .stopping: return "Остановка…"
         }
     }
 
     private func linkSection(_ link: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Ссылка на прокси")
+            Text("Ссылка для Telegram")
                 .font(.footnote)
                 .foregroundColor(.secondary)
+
             Text(link)
                 .font(.system(.footnote, design: .monospaced))
                 .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+
             HStack {
-                Button("Открыть в Telegram") { proxy.openInTelegram() }
-                    .buttonStyle(.borderedProminent)
-                Button("Копировать") { UIPasteboard.general.string = link }
-                    .buttonStyle(.bordered)
+                Button("Открыть в Telegram") {
+                    showBackgroundWarning = true
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button("Копировать") {
+                    UIPasteboard.general.string = link
+                }
+                .buttonStyle(.bordered)
             }
         }
         .padding()
@@ -90,20 +174,33 @@ struct ContentView: View {
         .cornerRadius(8)
     }
 
-    private var noticeSection: some View {
-        Text("iOS приостанавливает приложения в фоне, поэтому прокси работает, пока это приложение открыто, и ещё недолго после выхода из него.")
-            .font(.caption)
-            .foregroundColor(.secondary)
+    private var backgroundNotice: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label("Ограничение iOS", systemImage: "info.circle")
+                .font(.footnote.weight(.semibold))
+
+            Text("Это локальный сервер внутри приложения. Когда ты открываешь Telegram, iOS может приостановить приложение и остановить обработку подключений. Текущая версия подходит для проверки ядра и работы на переднем плане, но ещё не гарантирует стабильную работу прокси при переключении между приложениями.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+        .padding()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemBackground))
+        .cornerRadius(8)
     }
 
     private var logSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("Лог").font(.footnote).foregroundColor(.secondary)
+                Text("Журнал работы")
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
                 Spacer()
-                Button("Очистить") { proxy.clearLog() }.font(.footnote)
+                Button("Очистить") { proxy.clearLog() }
+                    .font(.footnote)
             }
-            Text(proxy.logLines.isEmpty ? "—" : proxy.logLines.joined(separator: "\n"))
+
+            Text(proxy.logLines.isEmpty ? "Пока нет сообщений" : proxy.logLines.joined(separator: "\n"))
                 .font(.system(size: 10, design: .monospaced))
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)

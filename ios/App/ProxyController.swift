@@ -3,8 +3,8 @@ import SwiftUI
 import UIKit
 
 // MARK: - C callbacks
-// These are plain C function pointers, so they cannot capture anything.
-// They may fire on any Rust thread, hence the hop to the main actor.
+// Rust invokes these callbacks from worker threads. Always hop to the main actor
+// before changing SwiftUI-observed state.
 
 private let onLogCallback: tgws_str_cb = { text, _ in
     guard let text else { return }
@@ -27,26 +27,33 @@ private let onStoppedCallback: tgws_void_cb = { _ in
     Task { @MainActor in ProxyController.shared.didStop() }
 }
 
+// MARK: - Lifecycle state
+
+enum ProxyStatus: Equatable {
+    case stopped
+    case starting
+    case running
+    case stopping
+}
+
 // MARK: - Controller
 
 @MainActor
 final class ProxyController: ObservableObject {
     static let shared = ProxyController()
 
-    /// Same flags the `tg-ws-proxy` binary accepts. Keep the host on 127.0.0.1
-    /// so Telegram on the same phone can reach it; `--link-ip` makes the printed
-    /// `tg://` link point at it too instead of an auto-detected Wi-Fi address.
-    static let defaultArgs = "--host 127.0.0.1 --link-ip 127.0.0.1 --quiet"
+    /// The proxy only listens on loopback: Telegram on this same iPhone is the
+    /// intended client. Do not publish this listener to the local Wi-Fi network.
+    /// Keep logs enabled by default so startup and connection failures are visible.
+    static let defaultArgs = "--host 127.0.0.1 --link-ip 127.0.0.1"
 
     @Published var args: String {
         didSet { UserDefaults.standard.set(args, forKey: "proxyArgs") }
     }
-    @Published private(set) var isRunning = false
+    @Published private(set) var status: ProxyStatus = .stopped
     @Published private(set) var link: String?
     @Published private(set) var errorMessage: String?
     @Published private(set) var logLines: [String] = []
-
-    private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
 
     private init() {
         args = UserDefaults.standard.string(forKey: "proxyArgs") ?? Self.defaultArgs
@@ -56,75 +63,61 @@ final class ProxyController: ObservableObject {
     // MARK: Actions
 
     func start() {
+        guard status == .stopped else { return }
+
         errorMessage = nil
         link = nil
+        status = .starting
+
         if let cError = tgws_start(args) {
             errorMessage = String(cString: cError)
             tgws_free_string(cError)
-            return
+            status = .stopped
         }
-        isRunning = true
-        UIApplication.shared.isIdleTimerDisabled = true
     }
 
     func stop() {
+        guard status == .starting || status == .running else { return }
+        status = .stopping
         tgws_stop()
-        isRunning = false
-        link = nil
-        UIApplication.shared.isIdleTimerDisabled = false
-        endBackgroundTask()
     }
 
     func openInTelegram() {
-        guard let link, let url = URL(string: link) else { return }
-        beginBackgroundTask()
+        guard status == .running,
+              let link,
+              let url = URL(string: link) else { return }
         UIApplication.shared.open(url)
     }
 
-    func clearLog() { logLines.removeAll() }
-
-    func sceneDidEnterBackground() {
-        if isRunning { beginBackgroundTask() }
+    func clearLog() {
+        logLines.removeAll()
     }
 
     // MARK: Callbacks from Rust
 
     func appendLog(_ line: String) {
         logLines.append(line)
-        if logLines.count > 500 { logLines.removeFirst(logLines.count - 500) }
+        if logLines.count > 500 {
+            logLines.removeFirst(logLines.count - 500)
+        }
     }
 
     func didStartListening(_ link: String) {
+        // A Stop can be pressed while the Rust worker is still binding.
+        // Do not repaint the UI as Running after the user requested a stop.
+        guard status != .stopping else { return }
         self.link = link
+        status = .running
     }
 
     func didFail(_ message: String) {
         errorMessage = message
-        isRunning = false
         link = nil
-        UIApplication.shared.isIdleTimerDisabled = false
-        endBackgroundTask()
+        status = .stopped
     }
 
     func didStop() {
-        isRunning = false
         link = nil
-        UIApplication.shared.isIdleTimerDisabled = false
-        endBackgroundTask()
-    }
-
-    // MARK: Background time
-
-    private func beginBackgroundTask() {
-        guard backgroundTask == .invalid else { return }
-        backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "tg-ws-proxy") { [weak self] in
-            Task { @MainActor in self?.endBackgroundTask() }
-        }
-    }
-
-    private func endBackgroundTask() {
-        guard backgroundTask != .invalid else { return }
-        UIApplication.shared.endBackgroundTask(backgroundTask)
-        backgroundTask = .invalid
+        status = .stopped
     }
 }
